@@ -1,3 +1,5 @@
+To run spider open terminal, change directopy to your scrapy project and run spiders with command 'scrapy crawl <name>'
+If you want to save output in csv file then run spiders with command 'scrapy crawl <name> -o <name>.csv'
 
 Firstly run brands.py spider
 Then run links.py spider
