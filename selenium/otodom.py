@@ -40,7 +40,7 @@ def calculate_travel_time(address, destination_address, key, departure_time=date
         print(f"API Error: {e.status}")
         return 'API Error: Unable to calculate travel time'
     
-api_key = 'AIzaSyDYu7MUbs87K29syVqjlDM6j9S4ypRVpGA'  
+api_key = ''  
 edge_driver_path = 'D:\Extra study\edgedriver_win64\msedgedriver.exe'
 
 # Set up Edge WebDriver
