@@ -1,25 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat Mar  9 16:23:57 2024
+Spyder Editor
 
-@author: Pavilion
+This is a temporary script file.
 """
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from bs4 import BeautifulSoup
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+
 import time
 import os
+import math
+import pickle
 import pandas as pd
-import numpy as np
-from unidecode import unidecode
 import googlemaps
 import datetime
 today = str(datetime.date.today())
 from datetime import datetime
 
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.edge.service import Service as EdgeService
+
+SLEEP = 1000
+api_key = ''  
+edge_driver_path = r'C:\Users\Dell\Downloads\msedgedriver.exe'
+
+# Generate timestamp in ddmmyyyy format
+timestamp = datetime.now().strftime('%d%m%Y')
+all_links_file = f'all_links_{timestamp}.pkl'
+processed_pages_file = f'processed_pages_{timestamp}.pkl'
+listings_data_file = f'listings_data_{timestamp}.pkl'
 
 def calculate_travel_time(address, destination_address, key, departure_time=datetime.now()):
     gmaps = googlemaps.Client(key=key)
@@ -40,15 +52,34 @@ def calculate_travel_time(address, destination_address, key, departure_time=date
         print(f"API Error: {e.status}")
         return 'API Error: Unable to calculate travel time'
     
-api_key = ''  
-edge_driver_path = 'D:\Extra study\edgedriver_win64\msedgedriver.exe'
+def parse_num(val):
+    if not val:
+        return None
+
+    val = (
+        val.replace("m²", "")
+           .replace("zł", "")
+           .replace("\xa0", "")
+           .replace(" ", "")
+           .replace(",", ".")
+           .strip()
+    )
+
+    try:
+        return float(val)
+    except ValueError:
+        return None
+
+
 
 # Set up Edge WebDriver
 options = webdriver.EdgeOptions()
-options.use_chromium = True
+options.add_argument("--blink-settings=imagesEnabled=false")
+#options.add_argument("--headless=new")
+
 
 # Specify the Edge WebDriver executable path
-driver = webdriver.Edge()
+driver = webdriver.Edge(service=EdgeService(edge_driver_path), options=options)
 
 # URL of the website you want to scrape
 url = 'https://www.otodom.pl'
@@ -66,235 +97,265 @@ if not is_banner_closed:
         pass
 
 distanceRadius = 0
-priceMax=950000
+priceMax=1300000
 priceMin=600000
-areaMin=45
-areaMax=80
-buildYearMin = 1950
+areaMin=50
+areaMax=100
+buildYearMin = 2025
 roomsNumber = '%5BTHREE%2CFOUR%5D'
-buildYearMax = 2023
+buildYearMax = 2025
 
-listings_combined =[]
+wait = WebDriverWait(driver, 10)
 
-# Iterate through the pages and open each page in a new window
-for page in range(1, 18): #page number
-    # Construct the URL
-    url =f'https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/mazowieckie/warszawa/warszawa/warszawa?distanceRadius={distanceRadius}&limit=72&ownerTypeSingleSelect=ALL&priceMax={priceMax}&buildYearMin={buildYearMin}&priceMin={priceMin}&areaMin={areaMin}&areaMax={areaMax}&roomsNumber={roomsNumber}&buildYearMax={buildYearMax}&by=DEFAULT&direction=DESC&viewType=listing&page={page}'
-    # Open the URL in a new window
-    driver.execute_script("window.open('');")
-    driver.switch_to.window(driver.window_handles[-1])
+base_url = (
+    "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/"
+    "mazowieckie/warszawa/warszawa/warszawa"
+)
+
+params = (
+    f"?distanceRadius={distanceRadius}"
+    f"&limit=72"
+    f"&ownerTypeSingleSelect=ALL"
+    f"&priceMax={priceMax}"
+    f"&buildYearMin={buildYearMin}"
+    f"&priceMin={priceMin}"
+    f"&areaMin={areaMin}"
+    f"&areaMax={areaMax}"
+    f"&roomsNumber={roomsNumber}"
+    f"&buildYearMax={buildYearMax}"
+    f"&by=DEFAULT"
+    f"&direction=DESC"
+    f"&viewType=listing"
+    f"&page={{page}}"
+)
+
+all_links = set()
+
+# Load existing all_links if available
+if os.path.exists(all_links_file):
+    with open(all_links_file, 'rb') as f:
+        all_links = pickle.load(f)
+    print(f"Loaded {len(all_links)} existing links from {all_links_file}")
+    start_page = 1  # Will skip already processed pages via pickle tracking
+else:
+    print("Starting fresh - no existing all_links pickle found")
+    start_page = 1
+
+url = base_url + params.format(page=1)
+driver.get(url)
+try:
+    max_pages = math.ceil(int(wait.until(
+    EC.presence_of_element_located(
+        (By.XPATH, '//*[@id="__next"]/div[2]/main/div/div[2]/div[3]/div[1]/div[1]/div[1]/div/div/div/div[1]/div/div/span')
+    )
+).text.split()[-1])/72)
+except:
+    print('No element found. Refreshing')
+    time.sleep(SLEEP)
+    driver.refresh()
+    max_pages = math.ceil(int(wait.until(
+    EC.presence_of_element_located(
+        (By.XPATH, '//*[@id="__next"]/div[2]/main/div/div[2]/div[3]/div[1]/div[1]/div[1]/div/div/div/div[1]/div/div/span')
+    )
+).text.split()[-1])/72)
+
+# Track which pages have been processed
+if os.path.exists(processed_pages_file):
+    with open(processed_pages_file, 'rb') as f:
+        processed_pages = pickle.load(f)
+    print(f"Resuming from page {max(processed_pages)+2 if processed_pages else 1}/{max_pages}")
+else:
+    processed_pages = set()
+
+for page in range(1, max_pages + 1):
+    if page in processed_pages:
+        print(f"Page {page} already processed, skipping...")
+        continue
+        
+    url = base_url + params.format(page=page)
     driver.get(url)
 
-    time.sleep(3)
-
-    # Close Cookies banner
-    if not is_banner_closed:
+    # Accept cookies once
+    if page == 1:
         try:
-            cookie_banner = driver.find_element(By.ID,'onetrust-accept-btn-handler')
-            cookie_banner.click()
-            is_banner_closed = True
+            wait.until(
+                EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler"))
+            ).click()
         except:
             pass
 
-    # Scroll page down till the end
-    last_height = driver.execute_script("return document.body.scrollHeight")
-    while True:
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
+    try: 
+    # Wait for listings
+       wait.until(
+            EC.presence_of_all_elements_located(
+                (By.CSS_SELECTOR, 'a[data-cy="listing-item-link"]')
+            )
+        )
+    except:
+        print('No element found. Refreshing')
+        time.sleep(SLEEP)
+        driver.refresh()
+        wait.until(
+             EC.presence_of_all_elements_located(
+                 (By.CSS_SELECTOR, 'a[data-cy="listing-item-link"]')
+             )
+         )
 
-    # Wait for the results to load
-    #WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.XPATH, "//div[@role='navigation']")))
+    # Extract links directly via Selenium
+    page_links = driver.find_elements(
+        By.CSS_SELECTOR, 'a[data-cy="listing-item-link"]'
+    )
 
+    for el in page_links:
+        href = el.get_attribute("href")
+        if href and "undefined" not in href:
+            all_links.add(href)
+    
+    # Save progress after each page
+    processed_pages.add(page)
+    with open(all_links_file, 'wb') as f:
+        pickle.dump(all_links, f)
+    with open(processed_pages_file, 'wb') as f:
+        pickle.dump(processed_pages, f)
+    
+    print(f"Page {page}/{max_pages}: Collected {len(all_links)} total links")
 
-    # Scroll down to the end of the page
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+print(f"Collected {len(all_links)} links")
+if '/hpr/undefined' in all_links:
+    all_links.remove('/hpr/undefined')
 
-    # Parse the HTML using BeautifulSoup
-    soup = BeautifulSoup(driver.page_source, features="html.parser")
+# Save all_links to pickle file
+with open(all_links_file, 'wb') as f:
+    pickle.dump(all_links, f)
+print(f"Saved all_links to {all_links_file}")
 
-    # Find all the relevant information
-    listings = soup.find_all('article', {'data-cy': 'listing-item'})
-    listings_combined.append({'page': page, 'listings': listings})
+# Load existing listings_data if available
+if os.path.exists(listings_data_file):
+    with open(listings_data_file, 'rb') as f:
+        listings_data = pickle.load(f)
+    print(f"Loaded {len(listings_data)} existing listings from {listings_data_file}")
+    # Get already processed links
+    processed_links = {d['url'].replace('https://www.otodom.pl', '') for d in listings_data}
+    remaining_links = all_links - processed_links
+    print(f"Resuming from link {len(listings_data)+1}/{len(all_links)}")
+else:
+    listings_data = []
+    remaining_links = all_links
+    print("Starting fresh - no existing listings_data pickle found")
 
-
-data = []
-rooms = area = floor = None
-
-for item in listings_combined:
-    listings = item['listings']
-    for record in listings:
-
+for idx, link in enumerate(remaining_links, start=len(listings_data)+1):
     # Extract the link to the record
-        link = record.find("a", {'data-testid':'listing-item-link'}).get("href")
-        link = "https://www.otodom.pl"+link
+    url = link
+    driver.get(url)
+
+    data = {}
+    try:
+        rows = wait.until(
+            EC.presence_of_all_elements_located(
+                (By.XPATH, '//div[@data-sentry-element="ItemGridContainer"]')
+            )
+        )
         
-    # Extract the title
-        property_title = record.find('p', {'data-cy': 'listing-item-title'}).get_text()
-
-    # Extract the Offerer
-        offerer = record.find_all('div')[-2].get_text()
-
-    # Extract the Address
-        address = record.find('p', {'data-testid': 'advert-card-address'}).get_text()
+        for row in rows:
+            cells = row.find_elements(By.XPATH, './div')
         
-    # Extract the other details
-        price_element = record.find('div', {'data-testid': 'listing-item-header'})
-        price = price_element.get_text().replace('\xa0', '').split('zł')[0].strip() if price_element else None
-
-
-    # Extract the number of rooms, area, and price
-        # Initialize default values for rooms, area, and floor
-        rooms = area = floor = 'N/A'  # 'N/A' can be replaced with any suitable default value
+            if len(cells) < 2:
+                continue
         
-        # Find the 'div' that contains the details
-        specs_list = record.find('div', {'data-testid': 'advert-card-specs-list'})
+            key = cells[0].text.replace(":", "").strip()
+            value = cells[1].text.strip()
         
-        if specs_list:
-            # Extract all 'dd' elements within the specs_list
-            details = specs_list.find_all("dd")
+            data[key] = value
+    except:
+        print('No element found. Refreshing')
+        time.sleep(SLEEP)
+        driver.refresh()
+        rows = wait.until(
+            EC.presence_of_all_elements_located(
+                (By.XPATH, '//div[@data-sentry-element="ItemGridContainer"]')
+            )
+        )
         
-            # Loop through the details and assign values based on the index
-            for idx, detail in enumerate(details[:3]):
-                detail_text = detail.get_text().strip()  # Get the text content and strip any leading/trailing whitespace
-                
-                if idx == 0:  # Assuming the first 'dd' always contains room information
-                    rooms = detail_text.replace(" pokoje", "")
-                elif idx == 1:  # Assuming the second 'dd' always contains area information
-                    area = detail_text.replace(" m²", "")
-                elif idx == 2:  # Assuming the third 'dd' always contains floor information
-                    floor = detail_text.replace(" piętro", "")
+        for row in rows:
+            cells = row.find_elements(By.XPATH, './div')
         
-        try:
-            price_m2 = int(price)/float(area)    
-        except:
-            price_m2 = 'NA'
-
-        # Append the attributes to the data list
-        data.append({
-            "Link": link,
-            "Property": property_title,
-            "Address": address,
-            "Rooms": rooms,
-            "Area (m²)": area,
-            "Price (zł)": price,
-            "Price (zł/m2)": price_m2,
-            "Offerer": offerer,
-            "Piętro": floor
-        })
-
-
-
-# Create a dataframe from the data list
-df = pd.DataFrame(data)
-
-keys = [
-    "Czynsz", "Forma własności", "Stan wykończenia", "Balkon / ogród / taras", "Miejsce parkingowe", "Ogrzewanie", 
-    "Dostępne od", "Rok budowy", "Rodzaj zabudowy", "Okna", "Winda", 
-    "Media", "Zabezpieczenia", "Wyposażenie", "Typ ogłoszeniodawcy",
-    "Materiał budynku", "Opis"
-]
-
-keys_no_sib = ["Data dodania", "Data aktualizacji"]
-    
-for index, row in df.iterrows():
-    # Extract link from the row
-    link = row['Link']
-
-    # Use Selenium to open the page
-    driver.get(link)
-
-    # Get the page source after JavaScript has been executed
-    page_source = driver.page_source
-
-    # Parse the page source with BeautifulSoup
-    soup = BeautifulSoup(page_source, 'html.parser')
-    
-    # Initialize an empty dictionary to hold the extracted values
-    extracted_values = {}
-    
-    # Iterate through the keys and extract their corresponding values from the HTML content
-    for key in keys:
-        # Search for elements that might contain the key. We'll look for divs and spans that contain the key text.
-        elements = soup.find_all(['div', 'span', 'h2'], string=lambda text: text and key in text)
+            if len(cells) < 2:
+                continue
         
-        value = "Not Found"
-        for element in elements:
-            # Attempt to find the next sibling or parent's next sibling that could contain the value
-            next_sibling = element.find_next_sibling()
-            if not next_sibling:
-                next_sibling = element.parent.find_next_sibling()
-            if next_sibling:
-                value = next_sibling.get_text().strip()
-                break  # Break the loop if a value is found
+            key = cells[0].text.replace(":", "").strip()
+            value = cells[1].text.strip()
         
-        extracted_values[key] = value
-
-    for key in keys_no_sib:
-        try:
-            value = soup.find_all(['div', 'span', 'h2'], string=lambda text: text and key in text)
-            extracted_values[key] = value
-        except:
-            extracted_values[key] = "Not Found"
+            data[key] = value
+        
+            
     
     try:
-        extracted_values['Rynek'] = soup.find('div', {'data-testid':'table-value-market'}).get_text()
+        price_el = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, '//strong[@data-cy="adPageHeaderPrice"]')
+            )
+        )
+        data['Cena'] = price_el.text
     except:
-        extracted_values['Rynek'] = 'pierwotny?'
+        try:
+            print('No element found. Refreshing')
+            time.sleep(SLEEP)
+            driver.refresh()
+            # Fallback price (investment listing)
+            price_el = wait.until(
+                EC.presence_of_element_located(
+                    (By.XPATH, '//h3[@data-cy="investment-price"]')
+                )
+            )
+            data['Cena'] = price_el.text
     
-    for key, value in extracted_values.items():
-        df.at[index, key] = value
-        extracted_values[key] = value
+        except TimeoutException:
+            data['Cena'] = None
+        
+    
+    
+    try:
+        description_el = wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, '[data-cy="adPageAdDescription"]')
+            )
+        )
+        data['Opis'] = description_el.text
+    except TimeoutException:
+        data['Opis'] = None
+    
+    try:
+        location_el = wait.until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, 'div.css-pla15i')
+            )
+        )
+        data['lokalizacja'] = location_el.text.strip()
+    except TimeoutException:
+        data['lokalizacja'] = None
+    
+    data['url'] = url
+    data["Powierzchnia"] = parse_num(data.get("Powierzchnia"))
+    data["Czynsz"] = parse_num(data.get("Czynsz"))
+    data["Cena"] = parse_num(data.get("Cena"))
 
-features_list = ['Wanna', 'Ogródek', 'Taras', 'Balkon', 'Garderoba', 'Nowe', 'Rezerwacja', 'Prysznic', 'Pompa', 'Fotowoltaika', "Metro", "Tramwaj", "SKM", "PKP"]
+    listings_data.append(data)
+    
+    # Save progress after each listing
+    with open(listings_data_file, 'wb') as f:
+        pickle.dump(listings_data, f)
+    
+    if idx % 10 == 0:
+        print(f"Progress: {idx}/{len(all_links)} listings scraped. Saved to {listings_data_file}")
 
-# Initialize feature columns to 0
-for feature in features_list:
-    df[feature] = 0
+# Save listings_data to pickle file
+with open(listings_data_file, 'wb') as f:
+    pickle.dump(listings_data, f)
+print(f"Saved listings_data to {listings_data_file}")
 
-# Update the DataFrame based on the 'Opis' column
-for feature in features_list:
-    # The case=False parameter makes the search case-insensitive
-    df.loc[df['Opis'].str.contains(feature, case=False, na=False), feature] = 1
+final_df = pd.DataFrame(listings_data)
 
-remont_phrases = 'po remoncie|wyremontowane|wykończone|świeże|odświeżone|remontowane|odnowione|wymienione|wymieniony'
-df['Remont'] = df['Opis'].str.contains(remont_phrases, case=False, na=False, regex=True).astype(int)
-
-agd_phrases = 'agd|wyposarzone'
-df['AGD'] = df['Opis'].str.contains(remont_phrases, case=False, na=False, regex=True).astype(int)
-
-dev_phrases = 'deweloperski|developerski|stan deweloperski|do wykończenia|do wykonczenia|w stanie developerskim|w stanie deweloperskim'
-df['Stan developerski'] = df['Opis'].str.contains(dev_phrases, case=False, na=False, regex=True).astype(int)
-
-#df.drop_duplicates(inplace = True)
-#df.columns = df.columns.str.replace(' ', '')
-for column in df.select_dtypes(include=[object]).columns:
-    df[column] = df[column].apply(lambda x: unidecode(x) if isinstance(x, str) else x)
-df.columns = [unidecode(col) if isinstance(col, str) else col for col in df.columns]
-
-df.dropna(subset = ['Address'], inplace = True)
-work = 'Rondo Daszynskiego, Warszawa'
-df['Travel Time to Destination'] = df['Address'].apply(lambda x: calculate_travel_time(address=x, destination_address=work, 
-                                                                                       departure_time=datetime(2024, 3, 27, 7, 30, 31, 342701), key = api_key))
-df['Status'] = 'New'
-df['Dzielnica'] = df['Address'].str.split(',').str[-3]
-df['Date scrapped'] = today
-
-try:
-    df_exist = pd.read_csv('flats_time.csv')
-    df_exist['Status'] = 'Present'
-    df['Status'] = np.where(df['Link'].isin(df_exist['Link']), 'Present', 'New')
-    df_all = pd.concat([df ,df_exist], ignore_index = True)
-except:
-    df_all = df.copy()
-
-df_all.drop_duplicates(subset='Link', keep='first', inplace = True)
-df.to_csv('flats_time_'+today+'.csv', encoding='utf-8')
-df_all.to_csv('flats_time.csv')
-driver.close()
-#os.system("taskkill /f /im pythonw.exe")
-
-
+# Save to CSV with timestamp
+csv_filename = f'otodom_listings_{timestamp}.csv'
+final_df.to_csv(csv_filename, index=False, encoding='utf-8')
+print(f"Saved CSV to {csv_filename}")
