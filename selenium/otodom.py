@@ -15,6 +15,7 @@ import googlemaps
 import datetime
 today = str(datetime.date.today())
 from datetime import datetime
+import ctypes
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -22,6 +23,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.edge.service import Service as EdgeService
+
+ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
 
 SLEEP = 1000
 api_key = ''  
@@ -359,3 +362,5 @@ final_df = pd.DataFrame(listings_data)
 csv_filename = f'otodom_listings_{timestamp}.csv'
 final_df.to_csv(csv_filename, index=False, encoding='utf-8')
 print(f"Saved CSV to {csv_filename}")
+
+ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
