@@ -2,3 +2,5 @@
 *.csv
 *.xlsx
 *.pkl
+.env
+*.json
